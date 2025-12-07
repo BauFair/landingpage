@@ -72,11 +72,17 @@
             pointer-events: auto;
         }
         
-        .company-name > div:first-child:hover {
+        .company-name > div:hover {
             color: rgb(0, 0, 0);
         }
         
-        .company-name > div:last-child:hover {
+        .under-text, .on-text, .by-text {
+            transition: color 0.2s;
+        }
+        
+        .company-name > div:hover .under-text,
+        .company-name > div:hover .on-text,
+        .company-name > div:hover .by-text {
             color: rgb(0, 0, 0);
         }
         
@@ -231,14 +237,14 @@
             border-color: rgba(255, 255, 255, 1);
         }
         
-        #textureNameInline, #visualStyleName {
+        #textureNameInline, #visualStyleName, #imageName {
             cursor: pointer;
             transition: color 0.2s;
             pointer-events: auto;
             display: inline-block;
         }
         
-        #textureNameInline:hover, #visualStyleName:hover {
+        #textureNameInline:hover, #visualStyleName:hover, #imageName:hover {
             color: rgb(0, 0, 0);
         }
     </style>
@@ -248,6 +254,7 @@
     
     <div class="company-info">
         <div class="company-name">
+            <div><span id="imageName" style="cursor: pointer;">photo 1</span> <span class="under-text">under</span></div>
             <div><span id="visualStyleName" style="cursor: pointer;">ascii</span> <span class="on-text">on</span></div>
             <div><span id="textureNameInline" style="cursor: pointer;">waves</span> <span class="by-text">by</span></div>
         </div>
@@ -309,6 +316,63 @@
         const visualStyles = ['ascii', 'pixel', 'glossy', 'halftone'];
         let selectedVisualStyle = visualStyles[Math.floor(Math.random() * visualStyles.length)];
         const chars = ['@','#','%','*','+','=','-','.',':',' '];
+        
+        // Image loading and storage
+        let loadedImages = [];
+        let imageCanvases = [];
+        let currentImageIndex = 0;
+        
+        async function loadImages() {
+            try {
+                const response = await fetch('images.json');
+                const data = await response.json();
+                const imagePromises = data.images.map((url, index) => {
+                    return new Promise((resolve) => {
+                        const img = new Image();
+                        // Don't set crossOrigin - will use proxy approach or direct display
+                        img.onload = () => {
+                            try {
+                                // Create offscreen canvas for each image
+                                const imgCanvas = document.createElement('canvas');
+                                imgCanvas.width = img.width;
+                                imgCanvas.height = img.height;
+                                const imgCtx = imgCanvas.getContext('2d');
+                                imgCtx.drawImage(img, 0, 0);
+                                imageCanvases.push(imgCanvas);
+                                loadedImages.push(img);
+                                console.log(`Loaded image ${index + 1}/${data.images.length}`);
+                                resolve();
+                            } catch (e) {
+                                console.warn(`Could not process image ${index + 1} (CORS issue):`, e);
+                                // Store the image URL anyway so we can still cycle
+                                loadedImages.push(img);
+                                imageCanvases.push(null); // Mark as not processable
+                                resolve();
+                            }
+                        };
+                        img.onerror = () => {
+                            console.warn(`Failed to load image ${index + 1}: ${url}`);
+                            resolve(); // Continue with other images
+                        };
+                        img.src = url;
+                    });
+                });
+                await Promise.all(imagePromises);
+                console.log(`Successfully loaded ${loadedImages.length} out of ${data.images.length} images`);
+                if (loadedImages.length === 0) {
+                    console.error('No images loaded! Check image URLs.');
+                } else {
+                    console.log('Images ready. Click "photo X" to cycle through them.');
+                }
+                updateImageName();
+            } catch (error) {
+                console.error('Error loading images:', error);
+                updateImageName();
+            }
+        }
+        
+        // Load images on startup
+        loadImages();
 
         let params = {
             param1: 2.0,
@@ -642,6 +706,28 @@
             });
         }
         
+        // Function to cycle through images
+        function cycleImage() {
+            if (loadedImages.length > 0) {
+                currentImageIndex = (currentImageIndex + 1) % loadedImages.length;
+                updateImageName();
+                console.log(`Switched to image ${currentImageIndex + 1} of ${loadedImages.length}`);
+            } else {
+                console.warn('No images loaded yet. Please wait for images to load or check console for errors.');
+            }
+        }
+        
+        function updateImageName() {
+            const imageNameEl = document.getElementById('imageName');
+            if (!imageNameEl) return;
+            
+            if (loadedImages.length > 0) {
+                imageNameEl.textContent = `photo ${currentImageIndex + 1}`;
+            } else {
+                imageNameEl.textContent = 'photo 1';
+            }
+        }
+        
         // Function to randomly select a visual style
         function selectRandomVisualStyle() {
             // Get a different visual style than the current one
@@ -652,6 +738,19 @@
             
             selectedVisualStyle = newStyle;
             document.getElementById('visualStyleName').textContent = selectedVisualStyle;
+        }
+        
+        // Add click event to image name
+        const imageNameEl = document.getElementById('imageName');
+        if (imageNameEl) {
+            imageNameEl.addEventListener('click', function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                cycleImage();
+            });
+            console.log('Image name click handler attached');
+        } else {
+            console.error('imageName element not found!');
         }
         
         // Add click event to visual style name
@@ -682,17 +781,26 @@
         }
 
         function drawPixelCell(ctx, x, y, size, value, hue, texX, texY) {
-            // Pixelated/metallic style - blocky, retro look
+            // Pixelated style - blocky, retro look with blend mode
             const light = 20 + value * 80;
-            const baseColor = `hsl(${hue}, 90%, ${light}%)`;
+            
+            // Use blend mode to mix with image background
+            ctx.globalCompositeOperation = 'multiply';
+            const opacity = 0.6 + value * 0.4; // Vary opacity based on value
+            const baseColor = `hsla(${hue}, 90%, ${light}%, ${opacity})`;
             
             ctx.fillStyle = baseColor;
             ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size);
             
+            // Reset blend mode
+            ctx.globalCompositeOperation = 'source-over';
+            
             if (value > 0.6) {
                 const highlightIntensity = (value - 0.6) / 0.4;
-                ctx.fillStyle = `hsla(${hue}, 100%, 100%, ${highlightIntensity * 0.4})`;
+                ctx.globalCompositeOperation = 'screen';
+                ctx.fillStyle = `hsla(${hue}, 100%, 100%, ${highlightIntensity * 0.3})`;
                 ctx.fillRect(x - size * 0.5, y - size * 0.5, size, size);
+                ctx.globalCompositeOperation = 'source-over';
             }
         }
         
@@ -752,6 +860,82 @@
             }
         }
         
+        function drawImageBackground(ctx, time) {
+            if (loadedImages.length === 0) return;
+            
+            const img = loadedImages[currentImageIndex];
+            if (!img || !img.complete) return;
+            
+            const cellSize = 9;
+            const cols = Math.ceil(W() / cellSize);
+            const rows = Math.ceil(H() / cellSize);
+            
+            const offsetX = Math.cos(time) * 5;
+            const offsetY = Math.sin(time) * 5;
+            
+            // Use drawImage with source rectangles to avoid getImageData (CORS-safe)
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const textureX = col / cols * 10 + offsetX;
+                    const textureY = row / rows * 10 + offsetY;
+                    
+                    // Use texture to distort UV coordinates (water flowing effect)
+                    const distortionStrength = 0.3;
+                    const distX = selectedTexture.fn(textureX + 0.1, textureY, time * 0.5);
+                    const distY = selectedTexture.fn(textureX, textureY + 0.1, time * 0.5);
+                    
+                    // Map screen coordinates to image UV coordinates (0-1)
+                    const u = (col / cols) + (distX - 0.5) * distortionStrength;
+                    const v = (row / rows) + (distY - 0.5) * distortionStrength;
+                    
+                    // Clamp to valid range
+                    const clampedU = Math.max(0, Math.min(1, u));
+                    const clampedV = Math.max(0, Math.min(1, v));
+                    
+                    // Calculate source coordinates in image
+                    const srcX = Math.floor(clampedU * img.width);
+                    const srcY = Math.floor(clampedV * img.height);
+                    
+                    // Ensure we're within image bounds
+                    if (srcX >= 0 && srcX < img.width && srcY >= 0 && srcY < img.height) {
+                        const pixelX = col * cellSize;
+                        const pixelY = row * cellSize;
+                        
+                        // Draw a small portion of the image using drawImage with source rectangle
+                        // This avoids getImageData and works with cross-origin images
+                        const sampleSize = Math.max(1, Math.floor(cellSize * 0.5));
+                        ctx.drawImage(
+                            img,
+                            srcX, srcY, sampleSize, sampleSize,  // Source rectangle
+                            pixelX, pixelY, cellSize, cellSize    // Destination rectangle
+                        );
+                    }
+                }
+            }
+        }
+        
+        function hslToRgb(h, s, l) {
+            let r, g, b;
+            if (s === 0) {
+                r = g = b = l;
+            } else {
+                const hue2rgb = (p, q, t) => {
+                    if (t < 0) t += 1;
+                    if (t > 1) t -= 1;
+                    if (t < 1/6) return p + (q - p) * 6 * t;
+                    if (t < 1/2) return q;
+                    if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+                    return p;
+                };
+                const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+                const p = 2 * l - q;
+                r = hue2rgb(p, q, h + 1/3);
+                g = hue2rgb(p, q, h);
+                b = hue2rgb(p, q, h - 1/3);
+            }
+            return [r, g, b];
+        }
+        
         function drawFrame(frame) {
             ctx.clearRect(0, 0, W(), H());
             
@@ -764,6 +948,10 @@
             const offsetY = Math.sin(time) * 5;
             const offsetZ = time * 0.5;
             
+            // First, draw the image background layer (always rendered, distorted by texture)
+            drawImageBackground(ctx, time);
+            
+            // Then, draw the visual style on top
             for (let row = 0; row < rows; row++) {
                 for (let col = 0; col < cols; col++) {
                     const x = col / cols * 10 + offsetX;
@@ -781,7 +969,7 @@
                     const pixelX = col * cellSize + cellSize * 0.5;
                     const pixelY = row * cellSize + cellSize * 0.5;
                     
-                    // Draw based on selected visual style
+                    // Draw based on selected visual style (on top of image)
                     switch(selectedVisualStyle) {
                         case 'ascii':
                             const charIndex = Math.floor(value * (chars.length - 1));
