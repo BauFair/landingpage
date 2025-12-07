@@ -247,6 +247,16 @@
         #textureNameInline:hover, #visualStyleName:hover, #imageName:hover {
             color: rgb(0, 0, 0);
         }
+        
+        .encoded-text, .overlayed-text, .inspires-text {
+            transition: color 0.2s;
+        }
+        
+        .company-name > div:hover .encoded-text,
+        .company-name > div:hover .overlayed-text,
+        .company-name > div:hover .inspires-text {
+            color: rgb(0, 0, 0);
+        }
     </style>
 </head>
 <body>
@@ -254,9 +264,9 @@
     
     <div class="company-info">
         <div class="company-name">
-            <div><span id="imageName" style="cursor: pointer;">inspiration 1</span> <span class="under-text">behind</span></div>
-            <div><span id="visualStyleName" style="cursor: pointer;">ascii</span> <span class="on-text">on</span></div>
-            <div><span id="textureNameInline" style="cursor: pointer;">waves</span> <span class="by-text">by</span></div>
+            <div><span id="visualStyleName" style="cursor: pointer;">ascii</span> <span class="encoded-text">encoded</span></div>
+            <div><span id="textureNameInline" style="cursor: pointer;">ridged</span> <span class="overlayed-text">overlayed</span></div>
+            <div><span id="imageName" style="cursor: pointer;">Kō Nakajima, Cylinder Projector</span> <span class="inspires-text">inspires</span></div>
         </div>
         <div class="company-email"><a href="mailto:waddup@baufer.yachts" target="_self" rel="noopener">waddup@baufer.yachts</a></div>
         <div class="company-address">
@@ -320,13 +330,63 @@
         // Image loading and storage
         let loadedImages = [];
         let imageCanvases = [];
+        let imageMetadata = []; // Store artist names and work titles
         let currentImageIndex = 0;
+        
+        function parseCSV(csvText) {
+            const lines = csvText.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            const data = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                
+                // Parse CSV line handling quoted fields
+                const values = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let j = 0; j < lines[i].length; j++) {
+                    const char = lines[i][j];
+                    if (char === '"') {
+                        inQuotes = !inQuotes;
+                    } else if (char === ',' && !inQuotes) {
+                        values.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                values.push(current.trim()); // Add last value
+                
+                if (values.length >= 4) {
+                    const url = values[0].replace(/^"|"$/g, '');
+                    const balanceText = values[1].replace(/^"|"$/g, '');
+                    const artist = values[2].replace(/^"|"$/g, '');
+                    const workTitle = values[3].replace(/^"|"$/g, '');
+                    
+                    if (url) {
+                        data.push({
+                            url: url,
+                            artist: artist || balanceText || '',
+                            workTitle: workTitle || ''
+                        });
+                    }
+                }
+            }
+            
+            return data;
+        }
         
         async function loadImages() {
             try {
-                const response = await fetch('images.json');
-                const data = await response.json();
-                const imagePromises = data.images.map((url, index) => {
+                const response = await fetch('moma.csv');
+                const csvText = await response.text();
+                const imageData = parseCSV(csvText);
+                
+                console.log(`Parsed ${imageData.length} images from CSV`);
+                
+                const imagePromises = imageData.map((item, index) => {
                     return new Promise((resolve) => {
                         const img = new Image();
                         // Don't set crossOrigin - will use proxy approach or direct display
@@ -340,29 +400,37 @@
                                 imgCtx.drawImage(img, 0, 0);
                                 imageCanvases.push(imgCanvas);
                                 loadedImages.push(img);
-                                console.log(`Loaded image ${index + 1}/${data.images.length}`);
+                                imageMetadata.push({
+                                    artist: item.artist,
+                                    workTitle: item.workTitle
+                                });
+                                console.log(`Loaded image ${index + 1}/${imageData.length}: ${item.artist || 'Unknown'}`);
                                 resolve();
                             } catch (e) {
                                 console.warn(`Could not process image ${index + 1} (CORS issue):`, e);
                                 // Store the image URL anyway so we can still cycle
                                 loadedImages.push(img);
                                 imageCanvases.push(null); // Mark as not processable
+                                imageMetadata.push({
+                                    artist: item.artist,
+                                    workTitle: item.workTitle
+                                });
                                 resolve();
                             }
                         };
                         img.onerror = () => {
-                            console.warn(`Failed to load image ${index + 1}: ${url}`);
+                            console.warn(`Failed to load image ${index + 1}: ${item.url}`);
                             resolve(); // Continue with other images
                         };
-                        img.src = url;
+                        img.src = item.url;
                     });
                 });
                 await Promise.all(imagePromises);
-                console.log(`Successfully loaded ${loadedImages.length} out of ${data.images.length} images`);
+                console.log(`Successfully loaded ${loadedImages.length} out of ${imageData.length} images`);
                 if (loadedImages.length === 0) {
                     console.error('No images loaded! Check image URLs.');
                 } else {
-                    console.log('Images ready. Click "photo X" to cycle through them.');
+                    console.log('Images ready. Click to cycle through them.');
                 }
                 updateImageName();
             } catch (error) {
@@ -721,8 +789,22 @@
             const imageNameEl = document.getElementById('imageName');
             if (!imageNameEl) return;
             
-            if (loadedImages.length > 0) {
-                imageNameEl.textContent = `inspiration ${currentImageIndex + 1}`;
+            if (loadedImages.length > 0 && imageMetadata[currentImageIndex]) {
+                const meta = imageMetadata[currentImageIndex];
+                let displayText = '';
+                
+                if (meta.artist) {
+                    displayText = meta.artist;
+                    if (meta.workTitle) {
+                        displayText += ', ' + meta.workTitle;
+                    }
+                } else if (meta.workTitle) {
+                    displayText = meta.workTitle;
+                } else {
+                    displayText = `inspiration ${currentImageIndex + 1}`;
+                }
+                
+                imageNameEl.textContent = displayText;
             } else {
                 imageNameEl.textContent = 'inspiration 1';
             }
